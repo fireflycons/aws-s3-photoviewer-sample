@@ -1,0 +1,317 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Viewing Photos in an Amazon S3 Bucket from a Browser",
+    "Parameters":    {
+        "WebsiteBucketPrefix": {
+            "Type": "String",
+            "Default": "photo-website",
+            "Description": "Prefix for name of S3 bucket to hold web site files. Region and AWS account number are appended for DNS uniqueness"
+        },
+        "PhotoBucketPrefix": {
+            "Type": "String",
+            "Default": "photo-albums",
+            "Description": "Prefix for name of S3 bucket to hold photo albums. Region and AWS account number are appended for DNS uniqueness"
+        }
+    },
+    "Resources": {
+        "PhotoBucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Sub": "${PhotoBucketPrefix}-${AWS::Region}-${AWS::AccountId}"
+                },
+                "CorsConfiguration": {
+                    "CorsRules": [
+                        {
+                            "AllowedHeaders": [
+                                "*"
+                            ],
+                            "AllowedMethods": [
+                                "GET",
+                                "HEAD"
+                            ],
+                            "AllowedOrigins": [
+                                "*"
+                            ]
+                        }
+                    ]
+                }
+            }
+        },
+        "WebsiteBucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Sub": "${WebsiteBucketPrefix}-${AWS::Region}-${AWS::AccountId}"
+                },
+                "AccessControl": "PublicRead",
+                "WebsiteConfiguration": {
+                    "IndexDocument": "index.html"
+                }
+            }
+        },
+        "WebsiteBucketPolicy": {
+            "Type": "AWS::S3::BucketPolicy",
+            "Properties": {
+                "Bucket": {
+                    "Ref": "WebsiteBucket"
+                },
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "PublicReadGetObject",
+                            "Effect": "Allow",
+                            "Principal": "*",
+                            "Action": "s3:GetObject",
+                            "Resource": {
+                                "Fn::Join": [
+                                    "",
+                                    [
+                                        "arn:aws:s3:::",
+                                        {
+                                            "Ref": "WebsiteBucket"
+                                        },
+                                        "/*"
+                                    ]
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        "IdentityPool": {
+            "Type": "AWS::Cognito::IdentityPool",
+            "Properties": {
+                "AllowUnauthenticatedIdentities": "true"
+            }
+        },
+        "IdentityBasePolicy": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyName": "PhotoViewerBasePolicy",
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "CognitoAccess",
+                            "Effect": "Allow",
+                            "Action": [
+                                "mobileanalytics:PutEvents",
+                                "cognito-sync:*"
+                            ],
+                            "Resource": [
+                                "*"
+                            ]
+                        },
+                        {
+                            "Sid": "BucketAccess",
+                            "Effect": "Allow",
+                            "Action": [
+                                "s3:ListBucket"
+                            ],
+                            "Resource": [
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "arn:aws:s3:::",
+                                            {
+                                                "Ref": "PhotoBucket"
+                                            }
+                                        ]
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "Sid": "BucketObject",
+                            "Effect": "Allow",
+                            "Action": [
+                                "s3:GetObject"
+                            ],
+                            "Resource": [
+                                {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "arn:aws:s3:::",
+                                            {
+                                                "Ref": "PhotoBucket"
+                                            },
+                                            "/*"
+                                        ]
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "Roles": [
+                    {
+                        "Ref": "UnauthenticatedIdentityRole"
+                    },
+                    {
+                        "Ref": "AuthenticatedIdentityRole"
+                    }
+                ]
+            }
+        },
+        "UnauthenticatedIdentityRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Federated": "cognito-identity.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRoleWithWebIdentity",
+                            "Condition": {
+                                "StringEquals": {
+                                    "cognito-identity.amazonaws.com:aud": {
+                                        "Ref": "IdentityPool"
+                                    }
+                                },
+                                "ForAnyValue:StringLike": {
+                                    "cognito-identity.amazonaws.com:amr": "unauthenticated"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "Path": "/"
+            }
+        },
+        "AuthenticatedIdentityRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Federated": "cognito-identity.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRoleWithWebIdentity",
+                            "Condition": {
+                                "StringEquals": {
+                                    "cognito-identity.amazonaws.com:aud": {
+                                        "Ref": "IdentityPool"
+                                    }
+                                },
+                                "ForAnyValue:StringLike": {
+                                    "cognito-identity.amazonaws.com:amr": "authenticated"
+                                }
+                            }
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "cognito-photoviewer-auth",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Sid": "CognitoAccess",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "cognito-identity:*"
+                                    ],
+                                    "Resource": [
+                                        "*"
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "IdentityPoolRoleAttchment": {
+            "Type": "AWS::Cognito::IdentityPoolRoleAttachment",
+            "Properties": {
+                "IdentityPoolId": {
+                    "Ref": "IdentityPool"
+                },
+                "Roles": {
+                    "authenticated": {
+                        "Fn::GetAtt": [
+                            "AuthenticatedIdentityRole",
+                            "Arn"
+                        ]
+                    },
+                    "unauthenticated": {
+                        "Fn::GetAtt": [
+                            "UnauthenticatedIdentityRole",
+                            "Arn"
+                        ]
+                    }
+                }
+            }
+        }
+    },
+    "Outputs": {
+        "AuthenticationCode": {
+            "Description": "JavaScript code to authenticate with AWS using cognito identity pool - needed for PhotoViewer.js",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        {
+                            "Fn::Sub": "AWS.config.region = '${AWS::Region}'; "
+                        },
+                        "AWS.config.credentials = new AWS.CognitoIdentityCredentials({",
+                        {
+                            "Fn::Join": [
+                                "",
+                                [
+                                    "IdentityPoolId: '",
+                                    {
+                                        "Ref": "IdentityPool"
+                                    },
+                                    "'"
+                                ]
+
+                            ]
+                        },
+                        "});"
+                    ]
+                ]
+            }
+        },
+        "PhotoBucket": {
+            "Description": "Full name of S3 bucket to hold photo albums - needed for PhotoViewer.js",
+            "Value": {
+                "Ref": "PhotoBucket"
+            }
+        },
+        "PhotoBucketS3Url": {
+            "Description": "S3 url for photo upload via 'aws s3 sync'",
+            "Value": {
+                "Fn::Sub": "s3://${PhotoBucket}/"
+            }
+        },
+        "WebsiteURL": {
+            "Description": "URL of the photo website served from S3",
+            "Value": {
+                "Fn::GetAtt": [
+                    "WebsiteBucket",
+                    "WebsiteURL"
+                ]
+            }
+        },
+        "WebsiteBucketS3Url": {
+            "Description": "S3 url for web site upload via 'aws s3 sync'",
+            "Value": {
+                "Fn::Sub": "s3://${WebsiteBucket}/"
+            }
+        }
+    }
+}

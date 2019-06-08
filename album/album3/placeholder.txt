@@ -1,0 +1,1 @@
+Not a photo. Exists to ensure the 'folder' is created in S3.
